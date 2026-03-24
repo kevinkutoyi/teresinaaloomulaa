@@ -10,7 +10,7 @@
    all tributes, gallery images, portrait, name, years.
 ══════════════════════════════════════════ */
 // ── HARDCODED GITHUB CONFIG ──────────────────────────────────
-const GH_TOKEN  = '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';
+const GH_TOKEN  = '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';
 const GH_REPO   = 'kevinkutoyi/teresinaaloomulaa';
 const GH_BRANCH = 'main';
 const GH_PATH   = 'data.json';
