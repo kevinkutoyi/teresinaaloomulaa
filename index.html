@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>In Memoriam — A Space for Tributes</title>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=Lato:wght@300;400&display=swap" rel="stylesheet"/>
-  <link rel="stylesheet" href="style.css"/>
+  <link rel="stylesheet" href="tribute.css"/>
 </head>
 <body>
 
@@ -50,8 +50,8 @@
     </div>
 
     <p class="hero-ornament">In Loving Memory</p>
-    <h2 class="memorial-name" id="memorial-name" onclick="editName()" title="Click to edit name">Teresina Aloo Mulaa</h2>
-    <p class="memorial-years" id="memorial-years" onclick="editYears()" title="Click to edit years" style="cursor:pointer">1945 — March 2026</p>
+    <h2 class="memorial-name" id="memorial-name" onclick="editName()" title="Click to edit name">John Beloved Doe</h2>
+    <p class="memorial-years" id="memorial-years" onclick="editYears()" title="Click to edit years" style="cursor:pointer">1945 — 2024</p>
 
     <h1 class="hero-title">A Place to<br><em>Remember</em></h1>
     <p class="hero-subtitle">Light a candle. Leave your words. Let those who are gone know they are never forgotten.</p>
@@ -165,9 +165,11 @@
 
   <div class="lightbox" id="lightbox">
     <button class="lightbox-close" title="Close">✕</button>
+    <button class="lightbox-nav prev" onclick="navigateLightbox(-1)" title="Previous">&#8249;</button>
     <img id="lightbox-img" src="" alt="Memory photo"/>
+    <button class="lightbox-nav next" onclick="navigateLightbox(1)" title="Next">&#8250;</button>
   </div>
 
-  <script src="index.js"></script>
+  <script src="tribute.js"></script>
 </body>
 </html>
