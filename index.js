@@ -559,19 +559,15 @@ async function submitTribute() {
 ══════════════════════════════════════════ */
 function render() {
   const grid   = document.getElementById('tributes-grid');
-  const empty  = document.getElementById('empty-state');
   const sorted = [...tributes].sort((a, b) => sortNewest ? b.id - a.id : a.id - b.id);
 
   document.getElementById('tribute-count').textContent =
     tributes.length === 1 ? '1 tribute shared' : `${tributes.length} tributes shared`;
 
   if (!sorted.length) {
-    grid.innerHTML = '';
-    grid.appendChild(empty);
+    grid.innerHTML = `<div class="empty-state" id="empty-state"><div class="empty-state-icon">🕯</div><p>Be the first to leave a tribute.</p></div>`;
     return;
   }
-
-  if (empty.parentNode === grid) grid.removeChild(empty);
 
   grid.innerHTML = sorted.map((t, i) => `
     <div class="tribute-card" style="animation-delay:${i * 0.06}s">
