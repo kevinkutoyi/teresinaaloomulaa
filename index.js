@@ -1,23 +1,304 @@
 /* =============================================================
-   TRIBUTE PAGE — SCRIPTS
+   TRIBUTE PAGE — SCRIPTS  (with GitHub Sync)
    tribute.js
    ============================================================= */
 
 /* ══════════════════════════════════════════
-   STATE  (loaded from localStorage on boot)
+   GITHUB CONFIG
+   Config stored in localStorage under 'ghConfig'.
+   Data file in the repo is a single JSON file containing
+   all tributes, gallery images, portrait, name, years.
+══════════════════════════════════════════ */
+let ghConfig = JSON.parse(localStorage.getItem('ghConfig') || 'null');
+// fileSha: the current SHA of data.json in GitHub (needed for updates)
+let ghFileSha = null;
+
+/* ══════════════════════════════════════════
+   STATE  (loaded from localStorage on boot, then synced from GitHub)
 ══════════════════════════════════════════ */
 let tributes      = JSON.parse(localStorage.getItem('tributes')      || '[]');
 let galleryImages = JSON.parse(localStorage.getItem('galleryImages') || '[]');
 let sortNewest    = true;
 
 /* ══════════════════════════════════════════
-   STORAGE HELPERS
+   STORAGE HELPERS  (localStorage cache)
 ══════════════════════════════════════════ */
-function saveTributes()      { localStorage.setItem('tributes',      JSON.stringify(tributes));      }
-function saveGallery()       { localStorage.setItem('galleryImages', JSON.stringify(galleryImages)); }
-function savePortrait(src)   { localStorage.setItem('portrait',      src);                          }
-function saveName(val)       { localStorage.setItem('memorialName',  val);                          }
-function saveYears(val)      { localStorage.setItem('memorialYears', val);                          }
+function saveTributes()    { localStorage.setItem('tributes',      JSON.stringify(tributes)); }
+function saveGallery()     { localStorage.setItem('galleryImages', JSON.stringify(galleryImages)); }
+function savePortrait(src) { localStorage.setItem('portrait', src); }
+function saveName(val)     { localStorage.setItem('memorialName',  val); }
+function saveYears(val)    { localStorage.setItem('memorialYears', val); }
+
+/* ══════════════════════════════════════════
+   BUILD THE FULL DATA SNAPSHOT
+   This is what gets written to GitHub data.json
+══════════════════════════════════════════ */
+function buildSnapshot() {
+  return {
+    memorialName:  localStorage.getItem('memorialName')  || 'John Beloved Doe',
+    memorialYears: localStorage.getItem('memorialYears') || '1945 — 2024',
+    portrait:      localStorage.getItem('portrait')      || null,
+    tributes,
+    galleryImages,
+    lastUpdated:   new Date().toISOString()
+  };
+}
+
+/* ══════════════════════════════════════════
+   APPLY A SNAPSHOT TO THE PAGE
+   Used after pulling from GitHub
+══════════════════════════════════════════ */
+function applySnapshot(data) {
+  if (!data) return;
+
+  // Store each piece into localStorage
+  if (data.memorialName)  { localStorage.setItem('memorialName',  data.memorialName);  }
+  if (data.memorialYears) { localStorage.setItem('memorialYears', data.memorialYears); }
+  if (data.portrait)      { localStorage.setItem('portrait',      data.portrait);      }
+  if (Array.isArray(data.tributes))      { tributes      = data.tributes;      saveTributes(); }
+  if (Array.isArray(data.galleryImages)) { galleryImages = data.galleryImages; saveGallery();  }
+
+  // Refresh UI
+  restorePageState();
+  render();
+  if (galleryImages.length > 0) renderGallery();
+}
+
+/* ══════════════════════════════════════════
+   GITHUB API HELPERS
+══════════════════════════════════════════ */
+function ghHeaders() {
+  return {
+    'Authorization': `Bearer ${ghConfig.token}`,
+    'Accept':        'application/vnd.github+json',
+    'Content-Type':  'application/json',
+    'X-GitHub-Api-Version': '2022-11-28'
+  };
+}
+
+function ghFileUrl() {
+  const { repo, branch, path } = ghConfig;
+  return `https://api.github.com/repos/${repo}/contents/${path}?ref=${branch}`;
+}
+
+/* Fetch the current data.json from GitHub (returns parsed JS object or null) */
+async function ghFetchFile() {
+  const res = await fetch(ghFileUrl(), { headers: ghHeaders() });
+  if (res.status === 404) return { content: null, sha: null };
+  if (!res.ok) throw new Error(`GitHub fetch failed: ${res.status} ${res.statusText}`);
+  const file = await res.json();
+  ghFileSha = file.sha;
+  const decoded = JSON.parse(atob(file.content.replace(/\n/g, '')));
+  return { content: decoded, sha: file.sha };
+}
+
+/* Write the full snapshot to GitHub data.json */
+async function ghWriteFile(message) {
+  const snapshot = buildSnapshot();
+  const encoded  = btoa(unescape(encodeURIComponent(JSON.stringify(snapshot, null, 2))));
+
+  const body = {
+    message: message || `Tribute page update — ${new Date().toLocaleString()}`,
+    content: encoded,
+    branch:  ghConfig.branch
+  };
+  if (ghFileSha) body.sha = ghFileSha;  // required for updates (not creates)
+
+  const res = await fetch(
+    `https://api.github.com/repos/${ghConfig.repo}/contents/${ghConfig.path}`,
+    { method: 'PUT', headers: ghHeaders(), body: JSON.stringify(body) }
+  );
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || `GitHub write failed: ${res.status}`);
+  }
+
+  const result = await res.json();
+  ghFileSha = result.content.sha;   // store new SHA
+  return result;
+}
+
+/* ══════════════════════════════════════════
+   PULL  — fetch latest from GitHub and apply
+══════════════════════════════════════════ */
+async function pullFromGitHub() {
+  if (!ghConfig) { openGhModal(); return; }
+  setGhBarState('syncing', 'Pulling from GitHub…');
+  setBtnLoading('gh-pull-btn', true);
+  try {
+    const { content, sha } = await ghFetchFile();
+    ghFileSha = sha;
+    if (content) {
+      applySnapshot(content);
+      setGhBarState('ok', `Pulled · ${ghConfig.repo}`);
+      showToast('Pulled latest from GitHub ✦');
+    } else {
+      setGhBarState('ok', `Connected · ${ghConfig.repo} (empty)`);
+      showToast('No data file yet — push to create it ✦');
+    }
+  } catch (e) {
+    setGhBarState('error', 'Pull failed');
+    showToast('Pull failed: ' + e.message);
+    console.error(e);
+  } finally {
+    setBtnLoading('gh-pull-btn', false);
+  }
+}
+
+/* ══════════════════════════════════════════
+   PUSH  — write current state to GitHub
+══════════════════════════════════════════ */
+async function pushToGitHub(silent = false, commitMsg = null) {
+  if (!ghConfig) return;
+  if (!silent) {
+    setGhBarState('syncing', 'Pushing to GitHub…');
+    setBtnLoading('gh-push-btn', true);
+  }
+  try {
+    // Refresh SHA before writing to avoid conflicts
+    if (!ghFileSha) {
+      const { sha } = await ghFetchFile();
+      ghFileSha = sha;
+    }
+    await ghWriteFile(commitMsg);
+    setGhBarState('ok', `Synced · ${ghConfig.repo}`);
+    if (!silent) showToast('Pushed to GitHub ✦');
+    updateGhBar();
+  } catch (e) {
+    setGhBarState('error', 'Push failed');
+    if (!silent) showToast('Push failed: ' + e.message);
+    console.error(e);
+  } finally {
+    if (!silent) setBtnLoading('gh-push-btn', false);
+  }
+}
+
+/* ══════════════════════════════════════════
+   AUTO-PUSH HELPER  (after each change)
+   Pushes silently if GitHub is configured.
+══════════════════════════════════════════ */
+async function autoPush(msg) {
+  if (!ghConfig) return;
+  try {
+    // Fetch fresh SHA first so we don't get 409 conflicts
+    const { sha } = await ghFetchFile();
+    ghFileSha = sha;
+    await ghWriteFile(msg);
+    setGhBarState('ok', `Synced · ${ghConfig.repo}`);
+    updateGhBar();
+  } catch(e) {
+    setGhBarState('error', 'Auto-push failed');
+    console.error('Auto-push failed:', e);
+  }
+}
+
+/* ══════════════════════════════════════════
+   GITHUB CONFIG MODAL
+══════════════════════════════════════════ */
+function openGhModal() {
+  // Pre-fill from saved config
+  if (ghConfig) {
+    document.getElementById('gh-token').value  = ghConfig.token  || '';
+    document.getElementById('gh-repo').value   = ghConfig.repo   || '';
+    document.getElementById('gh-branch').value = ghConfig.branch || 'main';
+    document.getElementById('gh-path').value   = ghConfig.path   || 'data.json';
+  }
+  document.getElementById('gh-overlay').classList.add('open');
+  document.getElementById('gh-modal-status').textContent = '';
+}
+
+function closeGhModal() {
+  document.getElementById('gh-overlay').classList.remove('open');
+}
+
+async function saveGhConfig() {
+  const token  = document.getElementById('gh-token').value.trim();
+  const repo   = document.getElementById('gh-repo').value.trim();
+  const branch = document.getElementById('gh-branch').value.trim() || 'main';
+  const path   = document.getElementById('gh-path').value.trim()   || 'data.json';
+
+  const statusEl = document.getElementById('gh-modal-status');
+
+  if (!token || !repo) {
+    statusEl.textContent = '⚠ Token and repository are required.';
+    statusEl.style.color = '#e57373';
+    return;
+  }
+
+  statusEl.textContent = 'Testing connection…';
+  statusEl.style.color = 'var(--muted)';
+
+  ghConfig = { token, repo, branch, path };
+
+  // Test the connection
+  try {
+    const res = await fetch(`https://api.github.com/repos/${repo}`, {
+      headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' }
+    });
+    if (!res.ok) throw new Error(`Repository not found or no access (${res.status})`);
+    const repoData = await res.json();
+
+    // Save config
+    localStorage.setItem('ghConfig', JSON.stringify(ghConfig));
+    ghFileSha = null;  // reset so we re-fetch SHA
+
+    statusEl.textContent = `✓ Connected to ${repoData.full_name}`;
+    statusEl.style.color = '#81c784';
+
+    updateGhBar();
+
+    // Pull latest data from repo
+    setTimeout(async () => {
+      closeGhModal();
+      await pullFromGitHub();
+    }, 800);
+
+  } catch (e) {
+    statusEl.textContent = '✗ ' + e.message;
+    statusEl.style.color = '#e57373';
+    ghConfig = JSON.parse(localStorage.getItem('ghConfig') || 'null'); // revert
+  }
+}
+
+/* ══════════════════════════════════════════
+   STATUS BAR HELPERS
+══════════════════════════════════════════ */
+function updateGhBar() {
+  const indicator = document.getElementById('gh-indicator');
+  const label     = document.getElementById('gh-bar-label');
+  const repoEl    = document.getElementById('gh-bar-repo');
+  const pullBtn   = document.getElementById('gh-pull-btn');
+  const pushBtn   = document.getElementById('gh-push-btn');
+
+  if (ghConfig) {
+    indicator.className = 'gh-indicator connected';
+    label.textContent   = 'GitHub connected';
+    repoEl.textContent  = ghConfig.repo;
+    pullBtn.disabled = false;
+    pushBtn.disabled = false;
+  } else {
+    indicator.className = 'gh-indicator';
+    label.textContent   = 'Not connected to GitHub';
+    repoEl.textContent  = '';
+    pullBtn.disabled = true;
+    pushBtn.disabled = true;
+  }
+}
+
+function setGhBarState(state, text) {
+  const indicator = document.getElementById('gh-indicator');
+  const label     = document.getElementById('gh-bar-label');
+  indicator.className = 'gh-indicator ' + state;
+  label.textContent   = text;
+}
+
+function setBtnLoading(id, loading) {
+  const btn = document.getElementById(id);
+  if (!btn) return;
+  btn.disabled = loading;
+  btn.style.opacity = loading ? '0.5' : '';
+}
 
 /* ══════════════════════════════════════════
    INIT — run after DOM is ready
@@ -29,26 +310,34 @@ document.addEventListener('DOMContentLoaded', () => {
   initGalleryUpload();
   initLightbox();
   render();
+  updateGhBar();
+
+  // If GitHub is configured, auto-pull on load
+  if (ghConfig) {
+    pullFromGitHub();
+  }
+
+  // Close modal on overlay click
+  document.getElementById('gh-overlay').addEventListener('click', function(e) {
+    if (e.target === this) closeGhModal();
+  });
 });
 
 /* ══════════════════════════════════════════
    RESTORE ALL SAVED STATE ON PAGE LOAD
 ══════════════════════════════════════════ */
 function restorePageState() {
-  // Portrait
   const savedPortrait = localStorage.getItem('portrait');
   if (savedPortrait) {
     document.getElementById('portrait-display').innerHTML =
       `<img class="hero-portrait" src="${savedPortrait}" alt="Memorial portrait"/>`;
   }
 
-  // Name & years
   const savedName  = localStorage.getItem('memorialName');
   const savedYears = localStorage.getItem('memorialYears');
   if (savedName)  document.getElementById('memorial-name').textContent  = savedName;
   if (savedYears) document.getElementById('memorial-years').textContent = savedYears;
 
-  // Gallery — render tiles from saved images
   if (galleryImages.length > 0) renderGallery();
 }
 
@@ -71,12 +360,13 @@ function initPortraitUpload() {
     const file = this.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (e) => {
-      const src     = e.target.result;
-      const display = document.getElementById('portrait-display');
-      display.innerHTML = `<img class="hero-portrait" src="${src}" alt="Memorial portrait"/>`;
-      savePortrait(src);   // persist to localStorage
+    reader.onload = async (e) => {
+      const src = e.target.result;
+      document.getElementById('portrait-display').innerHTML =
+        `<img class="hero-portrait" src="${src}" alt="Memorial portrait"/>`;
+      savePortrait(src);
       showToast('Portrait saved ✦');
+      await autoPush('Update memorial portrait');
     };
     reader.readAsDataURL(file);
   });
@@ -85,21 +375,23 @@ function initPortraitUpload() {
 /* ══════════════════════════════════════════
    EDITABLE NAME & YEARS
 ══════════════════════════════════════════ */
-function editName() {
+async function editName() {
   const el  = document.getElementById('memorial-name');
   const val = prompt('Enter the name of the person being honoured:', el.textContent);
   if (val && val.trim()) {
     el.textContent = val.trim();
     saveName(val.trim());
+    await autoPush(`Update memorial name to "${val.trim()}"`);
   }
 }
 
-function editYears() {
+async function editYears() {
   const el  = document.getElementById('memorial-years');
   const val = prompt('Enter the years (e.g. 1945 — 2024):', el.textContent);
   if (val && val.trim()) {
     el.textContent = val.trim();
     saveYears(val.trim());
+    await autoPush('Update memorial years');
   }
 }
 
@@ -113,7 +405,6 @@ function initGalleryUpload() {
 function bindGalleryInput() {
   const input = document.getElementById('gallery-input');
   if (!input) return;
-  // Remove old listener by replacing the element clone trick
   const fresh = input.cloneNode(true);
   input.parentNode.replaceChild(fresh, input);
   fresh.addEventListener('change', function () {
@@ -121,13 +412,14 @@ function bindGalleryInput() {
     let loaded  = 0;
     files.forEach((file) => {
       const reader = new FileReader();
-      reader.onload = (e) => {
+      reader.onload = async (e) => {
         galleryImages.push(e.target.result);
         loaded++;
         if (loaded === files.length) {
-          saveGallery();          // persist entire gallery array
+          saveGallery();
           renderGallery();
-          showToast(`${files.length === 1 ? 'Photo' : files.length + ' photos'} added to gallery ✦`);
+          showToast(`${files.length === 1 ? 'Photo' : files.length + ' photos'} added ✦`);
+          await autoPush(`Add ${files.length} gallery photo(s)`);
         }
       };
       reader.readAsDataURL(file);
@@ -158,13 +450,11 @@ function renderGallery() {
       <input type="file" id="gallery-input" accept="image/*" multiple/>
     </div>`;
 
-  // Show at least 3 slots; grow as more images are added
   const totalSlots = Math.max(3, galleryImages.length);
   let html = '';
 
   for (let i = 0; i < totalSlots; i++) {
     if (i < galleryImages.length) {
-      // Real uploaded photo — show delete button on hover
       html += `
         <div class="gallery-item" data-index="${i}">
           <img src="${galleryImages[i]}" alt="Memory photo ${i + 1}" onclick="openLightbox(${i})"/>
@@ -182,17 +472,17 @@ function renderGallery() {
   }
 
   grid.innerHTML = html + addTile;
-  bindGalleryInput(); // re-bind after DOM rebuild
+  bindGalleryInput();
 }
 
-/* ── Delete a gallery photo ── */
-function deleteGalleryPhoto(e, index) {
+async function deleteGalleryPhoto(e, index) {
   e.stopPropagation();
   if (!confirm('Remove this photo from the gallery?')) return;
   galleryImages.splice(index, 1);
   saveGallery();
   renderGallery();
   showToast('Photo removed');
+  await autoPush('Remove gallery photo');
 }
 
 /* ══════════════════════════════════════════
@@ -206,7 +496,6 @@ function initLightbox() {
       this.classList.remove('open');
     }
   });
-  // Keyboard navigation
   document.addEventListener('keydown', (e) => {
     const lb = document.getElementById('lightbox');
     if (!lb.classList.contains('open')) return;
@@ -230,7 +519,7 @@ function navigateLightbox(dir) {
 /* ══════════════════════════════════════════
    SUBMIT TRIBUTE
 ══════════════════════════════════════════ */
-function submitTribute() {
+async function submitTribute() {
   const name     = document.getElementById('name').value.trim();
   const relation = document.getElementById('relation').value.trim();
   const message  = document.getElementById('tribute').value.trim();
@@ -239,13 +528,13 @@ function submitTribute() {
   if (!message) return shake('tribute');
 
   const entry = {
-    id: Date.now(),
+    id:       Date.now(),
     name,
     relation: relation || 'Friend',
     message,
-    date: new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }),
-    likes: 0,
-    liked: false
+    date:     new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }),
+    likes:    0,
+    liked:    false
   };
 
   tributes.unshift(entry);
@@ -260,6 +549,9 @@ function submitTribute() {
 
   showToast('Tribute posted — thank you ✦');
   document.getElementById('tributes-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  // Push to GitHub
+  await autoPush(`New tribute from ${name}`);
 }
 
 /* ══════════════════════════════════════════
@@ -311,13 +603,14 @@ function render() {
 /* ══════════════════════════════════════════
    LIKE
 ══════════════════════════════════════════ */
-function toggleLike(id) {
+async function toggleLike(id) {
   const t = tributes.find((x) => x.id === id);
   if (!t) return;
   t.liked = !t.liked;
   t.likes = (t.likes || 0) + (t.liked ? 1 : -1);
   saveTributes();
   render();
+  await autoPush(`Like on tribute by ${t.name}`);
 }
 
 /* ══════════════════════════════════════════
