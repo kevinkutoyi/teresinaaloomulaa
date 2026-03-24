@@ -9,7 +9,14 @@
    Data file in the repo is a single JSON file containing
    all tributes, gallery images, portrait, name, years.
 ══════════════════════════════════════════ */
-let ghConfig = JSON.parse(localStorage.getItem('ghConfig') || 'null');
+// ── HARDCODED GITHUB CONFIG ──────────────────────────────────
+const GH_TOKEN  = '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';
+const GH_REPO   = 'kevinkutoyi/teresinaaloomulaa';
+const GH_BRANCH = 'main';
+const GH_PATH   = 'data.json';
+// ─────────────────────────────────────────────────────────────
+
+let ghConfig = { token: GH_TOKEN, repo: GH_REPO, branch: GH_BRANCH, path: GH_PATH };
 // fileSha: the current SHA of data.json in GitHub (needed for updates)
 let ghFileSha = null;
 
@@ -194,72 +201,10 @@ async function autoPush(msg) {
 }
 
 /* ══════════════════════════════════════════
-   GITHUB CONFIG MODAL
+   GITHUB CONFIG MODAL  (removed — config is hardcoded)
 ══════════════════════════════════════════ */
-function openGhModal() {
-  // Pre-fill from saved config
-  if (ghConfig) {
-    document.getElementById('gh-token').value  = ghConfig.token  || '';
-    document.getElementById('gh-repo').value   = ghConfig.repo   || '';
-    document.getElementById('gh-branch').value = ghConfig.branch || 'main';
-    document.getElementById('gh-path').value   = ghConfig.path   || 'data.json';
-  }
-  document.getElementById('gh-overlay').classList.add('open');
-  document.getElementById('gh-modal-status').textContent = '';
-}
-
-function closeGhModal() {
-  document.getElementById('gh-overlay').classList.remove('open');
-}
-
-async function saveGhConfig() {
-  const token  = document.getElementById('gh-token').value.trim();
-  const repo   = document.getElementById('gh-repo').value.trim();
-  const branch = document.getElementById('gh-branch').value.trim() || 'main';
-  const path   = document.getElementById('gh-path').value.trim()   || 'data.json';
-
-  const statusEl = document.getElementById('gh-modal-status');
-
-  if (!token || !repo) {
-    statusEl.textContent = '⚠ Token and repository are required.';
-    statusEl.style.color = '#e57373';
-    return;
-  }
-
-  statusEl.textContent = 'Testing connection…';
-  statusEl.style.color = 'var(--muted)';
-
-  ghConfig = { token, repo, branch, path };
-
-  // Test the connection
-  try {
-    const res = await fetch(`https://api.github.com/repos/${repo}`, {
-      headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github+json' }
-    });
-    if (!res.ok) throw new Error(`Repository not found or no access (${res.status})`);
-    const repoData = await res.json();
-
-    // Save config
-    localStorage.setItem('ghConfig', JSON.stringify(ghConfig));
-    ghFileSha = null;  // reset so we re-fetch SHA
-
-    statusEl.textContent = `✓ Connected to ${repoData.full_name}`;
-    statusEl.style.color = '#81c784';
-
-    updateGhBar();
-
-    // Pull latest data from repo
-    setTimeout(async () => {
-      closeGhModal();
-      await pullFromGitHub();
-    }, 800);
-
-  } catch (e) {
-    statusEl.textContent = '✗ ' + e.message;
-    statusEl.style.color = '#e57373';
-    ghConfig = JSON.parse(localStorage.getItem('ghConfig') || 'null'); // revert
-  }
-}
+function openGhModal()  { /* no-op: config is hardcoded */ }
+function closeGhModal() { /* no-op: config is hardcoded */ }
 
 /* ══════════════════════════════════════════
    STATUS BAR HELPERS
@@ -316,11 +261,6 @@ document.addEventListener('DOMContentLoaded', () => {
   if (ghConfig) {
     pullFromGitHub();
   }
-
-  // Close modal on overlay click
-  document.getElementById('gh-overlay').addEventListener('click', function(e) {
-    if (e.target === this) closeGhModal();
-  });
 });
 
 /* ══════════════════════════════════════════
