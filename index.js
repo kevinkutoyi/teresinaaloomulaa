@@ -4,22 +4,53 @@
    ============================================================= */
 
 /* ══════════════════════════════════════════
-   STATE
+   STATE  (loaded from localStorage on boot)
 ══════════════════════════════════════════ */
-let tributes = JSON.parse(localStorage.getItem('tributes') || '[]');
-let sortNewest = true;
-let galleryImages = [];
+let tributes      = JSON.parse(localStorage.getItem('tributes')      || '[]');
+let galleryImages = JSON.parse(localStorage.getItem('galleryImages') || '[]');
+let sortNewest    = true;
+
+/* ══════════════════════════════════════════
+   STORAGE HELPERS
+══════════════════════════════════════════ */
+function saveTributes()      { localStorage.setItem('tributes',      JSON.stringify(tributes));      }
+function saveGallery()       { localStorage.setItem('galleryImages', JSON.stringify(galleryImages)); }
+function savePortrait(src)   { localStorage.setItem('portrait',      src);                          }
+function saveName(val)       { localStorage.setItem('memorialName',  val);                          }
+function saveYears(val)      { localStorage.setItem('memorialYears', val);                          }
 
 /* ══════════════════════════════════════════
    INIT — run after DOM is ready
 ══════════════════════════════════════════ */
 document.addEventListener('DOMContentLoaded', () => {
+  restorePageState();
   initCharCounter();
   initPortraitUpload();
   initGalleryUpload();
   initLightbox();
   render();
 });
+
+/* ══════════════════════════════════════════
+   RESTORE ALL SAVED STATE ON PAGE LOAD
+══════════════════════════════════════════ */
+function restorePageState() {
+  // Portrait
+  const savedPortrait = localStorage.getItem('portrait');
+  if (savedPortrait) {
+    document.getElementById('portrait-display').innerHTML =
+      `<img class="hero-portrait" src="${savedPortrait}" alt="Memorial portrait"/>`;
+  }
+
+  // Name & years
+  const savedName  = localStorage.getItem('memorialName');
+  const savedYears = localStorage.getItem('memorialYears');
+  if (savedName)  document.getElementById('memorial-name').textContent  = savedName;
+  if (savedYears) document.getElementById('memorial-years').textContent = savedYears;
+
+  // Gallery — render tiles from saved images
+  if (galleryImages.length > 0) renderGallery();
+}
 
 /* ══════════════════════════════════════════
    CHAR COUNTER
@@ -41,8 +72,11 @@ function initPortraitUpload() {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (e) => {
+      const src     = e.target.result;
       const display = document.getElementById('portrait-display');
-      display.innerHTML = `<img class="hero-portrait" src="${e.target.result}" alt="Memorial portrait"/>`;
+      display.innerHTML = `<img class="hero-portrait" src="${src}" alt="Memorial portrait"/>`;
+      savePortrait(src);   // persist to localStorage
+      showToast('Portrait saved ✦');
     };
     reader.readAsDataURL(file);
   });
@@ -54,13 +88,19 @@ function initPortraitUpload() {
 function editName() {
   const el  = document.getElementById('memorial-name');
   const val = prompt('Enter the name of the person being honoured:', el.textContent);
-  if (val && val.trim()) el.textContent = val.trim();
+  if (val && val.trim()) {
+    el.textContent = val.trim();
+    saveName(val.trim());
+  }
 }
 
 function editYears() {
   const el  = document.getElementById('memorial-years');
   const val = prompt('Enter the years (e.g. 1945 — 2024):', el.textContent);
-  if (val && val.trim()) el.textContent = val.trim();
+  if (val && val.trim()) {
+    el.textContent = val.trim();
+    saveYears(val.trim());
+  }
 }
 
 /* ══════════════════════════════════════════
@@ -73,12 +113,22 @@ function initGalleryUpload() {
 function bindGalleryInput() {
   const input = document.getElementById('gallery-input');
   if (!input) return;
-  input.addEventListener('change', function () {
-    Array.from(this.files).forEach((file) => {
+  // Remove old listener by replacing the element clone trick
+  const fresh = input.cloneNode(true);
+  input.parentNode.replaceChild(fresh, input);
+  fresh.addEventListener('change', function () {
+    const files = Array.from(this.files);
+    let loaded  = 0;
+    files.forEach((file) => {
       const reader = new FileReader();
       reader.onload = (e) => {
         galleryImages.push(e.target.result);
-        renderGallery();
+        loaded++;
+        if (loaded === files.length) {
+          saveGallery();          // persist entire gallery array
+          renderGallery();
+          showToast(`${files.length === 1 ? 'Photo' : files.length + ' photos'} added to gallery ✦`);
+        }
       };
       reader.readAsDataURL(file);
     });
@@ -108,15 +158,20 @@ function renderGallery() {
       <input type="file" id="gallery-input" accept="image/*" multiple/>
     </div>`;
 
+  // Show at least 3 slots; grow as more images are added
   const totalSlots = Math.max(3, galleryImages.length);
   let html = '';
 
   for (let i = 0; i < totalSlots; i++) {
     if (i < galleryImages.length) {
+      // Real uploaded photo — show delete button on hover
       html += `
-        <div class="gallery-item" onclick="openLightbox('${galleryImages[i]}')">
-          <img src="${galleryImages[i]}" alt="Memory photo ${i + 1}"/>
-          <div class="overlay"><span class="overlay-label">View</span></div>
+        <div class="gallery-item" data-index="${i}">
+          <img src="${galleryImages[i]}" alt="Memory photo ${i + 1}" onclick="openLightbox(${i})"/>
+          <div class="overlay">
+            <span class="overlay-label" onclick="openLightbox(${i})">View</span>
+            <button class="gallery-delete-btn" onclick="deleteGalleryPhoto(event, ${i})" title="Remove photo">✕</button>
+          </div>
         </div>`;
     } else {
       html += `
@@ -130,20 +185,46 @@ function renderGallery() {
   bindGalleryInput(); // re-bind after DOM rebuild
 }
 
+/* ── Delete a gallery photo ── */
+function deleteGalleryPhoto(e, index) {
+  e.stopPropagation();
+  if (!confirm('Remove this photo from the gallery?')) return;
+  galleryImages.splice(index, 1);
+  saveGallery();
+  renderGallery();
+  showToast('Photo removed');
+}
+
 /* ══════════════════════════════════════════
    LIGHTBOX
 ══════════════════════════════════════════ */
+let lightboxIndex = 0;
+
 function initLightbox() {
   document.getElementById('lightbox').addEventListener('click', function (e) {
     if (e.target === this || e.target.closest('.lightbox-close')) {
       this.classList.remove('open');
     }
   });
+  // Keyboard navigation
+  document.addEventListener('keydown', (e) => {
+    const lb = document.getElementById('lightbox');
+    if (!lb.classList.contains('open')) return;
+    if (e.key === 'Escape')      lb.classList.remove('open');
+    if (e.key === 'ArrowRight')  navigateLightbox(1);
+    if (e.key === 'ArrowLeft')   navigateLightbox(-1);
+  });
 }
 
-function openLightbox(src) {
-  document.getElementById('lightbox-img').src = src;
+function openLightbox(index) {
+  lightboxIndex = index;
+  document.getElementById('lightbox-img').src = galleryImages[index];
   document.getElementById('lightbox').classList.add('open');
+}
+
+function navigateLightbox(dir) {
+  lightboxIndex = (lightboxIndex + dir + galleryImages.length) % galleryImages.length;
+  document.getElementById('lightbox-img').src = galleryImages[lightboxIndex];
 }
 
 /* ══════════════════════════════════════════
@@ -168,13 +249,13 @@ function submitTribute() {
   };
 
   tributes.unshift(entry);
-  save();
+  saveTributes();
   render();
 
   // Reset form
-  document.getElementById('name').value     = '';
-  document.getElementById('relation').value = '';
-  document.getElementById('tribute').value  = '';
+  document.getElementById('name').value        = '';
+  document.getElementById('relation').value    = '';
+  document.getElementById('tribute').value     = '';
   document.getElementById('count').textContent = '0';
 
   showToast('Tribute posted — thank you ✦');
@@ -233,9 +314,9 @@ function render() {
 function toggleLike(id) {
   const t = tributes.find((x) => x.id === id);
   if (!t) return;
-  t.liked  = !t.liked;
-  t.likes  = (t.likes || 0) + (t.liked ? 1 : -1);
-  save();
+  t.liked = !t.liked;
+  t.likes = (t.likes || 0) + (t.liked ? 1 : -1);
+  saveTributes();
   render();
 }
 
@@ -251,10 +332,6 @@ function toggleSort() {
 /* ══════════════════════════════════════════
    HELPERS
 ══════════════════════════════════════════ */
-function save() {
-  localStorage.setItem('tributes', JSON.stringify(tributes));
-}
-
 function escHtml(s) {
   return s
     .replace(/&/g,  '&amp;')
@@ -273,7 +350,7 @@ function shake(id) {
   el.style.borderColor = '#e57373';
   el.focus();
   el.style.animation = 'none';
-  void el.offsetHeight; // force reflow
+  void el.offsetHeight;
   el.style.animation = 'shakeInput 0.4s ease';
   setTimeout(() => { el.style.borderColor = ''; el.style.animation = ''; }, 1200);
 }
