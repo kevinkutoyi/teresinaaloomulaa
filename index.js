@@ -9,14 +9,25 @@
    Data file in the repo is a single JSON file containing
    all tributes, gallery images, portrait, name, years.
 ══════════════════════════════════════════ */
-// ── HARDCODED GITHUB CONFIG ──────────────────────────────────
-const GH_TOKEN  = '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';
-const GH_REPO   = 'kevinkutoyi/teresinaaloomulaa';
-const GH_BRANCH = 'main';
-const GH_PATH   = 'data.json';
+// ── GITHUB CONFIG ─────────────────────────────────────────────
+// Token is injected at deploy time via the GitHub Actions secret MY_GITHUB_TOKEN.
+// It is NEVER hardcoded here. The build step writes config.js which sets
+// window.__TRIBUTE_CONFIG__ before this script runs.
+// Locally: create a config.js file manually (it is git-ignored).
 // ─────────────────────────────────────────────────────────────
+const _cfg      = (typeof window !== 'undefined' && window.__TRIBUTE_CONFIG__) || {};
+const GH_TOKEN  = _cfg.token  || '';
+const GH_REPO   = _cfg.repo   || '';
+const GH_BRANCH = _cfg.branch || 'main';
+const GH_PATH   = _cfg.path   || 'data.json';
 
-let ghConfig = { token: GH_TOKEN, repo: GH_REPO, branch: GH_BRANCH, path: GH_PATH };
+if (!GH_TOKEN || !GH_REPO) {
+  console.warn('[Tribute] GitHub token or repo not configured. Push/pull disabled. Check config.js.');
+}
+
+let ghConfig = (GH_TOKEN && GH_REPO)
+  ? { token: GH_TOKEN, repo: GH_REPO, branch: GH_BRANCH, path: GH_PATH }
+  : null;
 // fileSha: the current SHA of data.json in GitHub (needed for updates)
 let ghFileSha = null;
 
